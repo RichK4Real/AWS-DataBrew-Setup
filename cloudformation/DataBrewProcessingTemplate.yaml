@@ -1,0 +1,934 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  Create a lambda function to clean up file level issues on a data file 
+  as well as a DataBrew datasets, project, recipes and data qualifiers for the project
+  to improve data quality in the file
+
+  Also provides options to create specified S3 buckets referenced by lambda and 
+  databrew resources 
+
+Metadata: 
+  AWS::CloudFormation::Interface: 
+    ParameterGroups: 
+      - 
+        Label: 
+          default: "Project Setup"
+        Parameters: 
+          - ProjectName
+          - CreateBuckets
+          - ArchiveProcessedFiles
+      - 
+        Label: 
+          default: "Bucket References"
+        Parameters: 
+          - InputBucketName
+          - InputBucketPath
+          - FileProcessedBucketName
+          - FileProcessedBucketPath
+          - OutputBucketName
+          - OutputBucketPath
+          - ProcessedFileArchiveBucketName
+          - ProcessedFileArchiveBucketPath
+      - 
+        Label: 
+          default: "Overall File Preprocessing"
+        Parameters: 
+          - DataBrewFileType
+          - RemoveEscapeChars      
+      - 
+        Label: 
+          default: "CSV File Preprocessing"
+        Parameters: 
+          - CSVDelimiter
+          - CSVHeader
+          - RemoveEmbeddedDoubleQuotes
+          - ColumnHeaderConvertHashtags
+          - ColumnHeaderSpaces
+          - ColumnHeaderTrim
+ 
+    ParameterLabels:
+      CreateBuckets:
+        default: "Create Buckets?"
+      ArchiveProcessedFiles:
+        default: "Archive Processed Files?"
+      InputBucketName:
+        default: "Input Bucket Nane"
+      InputBucketPath:
+        default: "Input Bucket Path"        
+      FileProcessedBucketName:
+        default: "Proprocessed File Output Bucket Nane"        
+      FileProcessedBucketPath:
+        default: "File Preprocessing Output Path"         
+      OutputdBucketName:
+        default: "DataBrew Output Bucket Nane"           
+      OutputBucketPath:
+        default: "DataBrew Output Path"
+      ProcessedFileArchiveBucketName:
+        default: "Archive Bucket for DataBrew processed files"
+      ProcessedFileArchiveBucketPath:
+        default: "Archive Path for DataBrew processed files"        
+      DataBrewFileType:
+        default: 'File Type'
+      CSVDelimiter:
+        default: 'CSV Delimiter'
+      CSVHeader:
+        default: 'CSV Header?'
+
+      InitialStackCreation:
+        default: "Is this the initial stack creation?"      
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: |
+      Name of project used to identify stack resources
+    Default: "DataBrewStackSample"
+
+  # Buckets and Bucket Paths
+  CreateBuckets:
+    Type: String
+    Description: |
+      Set to true for Input Bucket Creation on stack creation.  
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+  ArchiveProcessedFiles:
+    Type: String
+    Description: |
+      Set to true to move DataBrew Input files to an archive when they are processed 
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"    
+  InputBucketName:
+    Type: String
+    Description: |
+      Name of the bucket new files we be processed from.
+      Bucket can be reused for other steps in the process, but path must differ.
+    Default: databrew-file-preprocessing-input-bucket
+    AllowedPattern: ^[0-9a-z][0-9a-z\.\-]{1,61}[0-9a-z]$
+    MinLength : 3
+    MaxLength : 63  
+  InputBucketPath:
+    Type: String
+    Description: Path in the input bucket the new files we be processed from.
+    Default: "databrew_file_preprocessing/inbound/" 
+  FileProcessedBucketName:
+    Type: String
+    Description: |
+      Name of the bucket processed files will be written to.
+      Bucket can be reused for other steps in the process, but path must differ.
+    Default: databrew-file-preprocessed-output-bucket
+    AllowedPattern: ^[0-9a-z][0-9a-z\.\-]{1,61}[0-9a-z]$
+    MinLength : 3
+    MaxLength : 63      
+  FileProcessedBucketPath:
+    Type: String
+    Description: |
+      Path in the file output bucket the processed files will be written to.
+      Will also be the path in the File Output bucket for DataBrew DataSet input
+    Default: "databrew_file_preprocessing/file_preprocessing_output/"
+  ProcessedFileArchiveBucketName:
+    Type: String
+    Description: |
+      Name of the bucket processed files will be moved to.
+      Bucket can be reused for other steps in the process, but path must differ.
+    Default: databrew-preprocessed-file-archive-bucket
+    AllowedPattern: ^[0-9a-z][0-9a-z\.\-]{1,61}[0-9a-z]$
+    MinLength : 3
+    MaxLength : 63      
+  ProcessedFileArchiveBucketPath:
+    Type: String
+    Description: |
+      Path in the file archive bucket the processed files moved to.
+    Default: "databrew_file_preprocessing/processed_file_archive/"    
+  OutputBucketName:
+    Type: String
+    Description: |
+      Name of the bucket DataBrew processed files will be written to.
+      Bucket can be reused for other steps in the process, but path must differ.
+    Default: databrew-output-bucket
+    AllowedPattern: ^[0-9a-z][0-9a-z\.\-]{1,61}[0-9a-z]$
+    MinLength : 3
+    MaxLength : 63      
+  OutputBucketPath:
+    Type: String
+    Description: Path in the output bucket the DataBrew processed files will be stored in.
+    Default: "databrew_file_preprocessing/databrew_output/"
+
+  # File Preprocessing settings
+  RemoveEscapeChars:
+    Type: String
+    Description: if true, remove escape sequences from data file
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+
+  # File Preprocessing settings - CSV    
+  RemoveEmbeddedDoubleQuotes:
+    Type: String
+    Description: if true, remove embedded double quotes from CSV field values in the data file
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+
+  # DataBrew File Setting
+  DataBrewFileType:
+    Type: String
+    Description: File type of the data being processed
+    AllowedValues:
+      - "CSV"
+      - "JSON"
+    Default: "CSV"
+
+  # File CSV specific Preprocessing Options
+  ColumnHeaderConvertHashtags:
+    Type: String
+    Description: if true, converts hash tags in column headers into "NUMBER"
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+  ColumnHeaderSpaces:
+    Type: String
+    Description: if true, converts spaces in column headers to underscore '_'
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+  ColumnHeaderTrim:
+    Type: String
+    Description: if true, removes leading and trailing space from column headers
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+  CSVDelimiter:
+    Type: String
+    Description: Value of delimiter character in CSV data
+    Default: ","
+    MinLength: 1
+    MaxLength: 1
+  CSVHeader:
+    Type: String
+    Description: 
+      if true, CSV File contains a header row
+    AllowedValues:
+      - "true"
+      - "false"
+    Default: "true"
+
+Mappings:
+  FileExtentionMap:
+    CSV:
+      FileExt : "csv"
+    JSON:
+      FileExt : "json"
+
+Conditions:
+  CSVFileType: !Equals
+    - !Ref DataBrewFileType
+    - "CSV"
+  JSONFileType: !Equals
+    - !Ref DataBrewFileType
+    - "JSON"
+  BucketCreation: !Equals
+    - !Ref CreateBuckets
+    - "true"
+  ArchiveProcessedFilesCondition: !Equals
+    - !Ref ArchiveProcessedFiles
+    - "true"
+
+  FileProcessedBucketCreation: !And 
+    - !Condition BucketCreation
+    - !Not [!Equals [!Ref InputBucketName, !Ref FileProcessedBucketName]]  
+
+  OutputBucketCreation: !And 
+    - !Condition BucketCreation
+    - !Not [!Equals [!Ref InputBucketName, !Ref OutputBucketName]]
+    - !Not [!Equals [!Ref FileProcessedBucketName, !Ref OutputBucketName]]      
+
+  ProcessedFileArchiveBucketCreation: !And 
+    - !Condition BucketCreation
+    - !Condition ArchiveProcessedFilesCondition
+    - !Not [!Equals [!Ref InputBucketName, !Ref ProcessedFileArchiveBucketName]]  
+    - !Not [!Equals [!Ref FileProcessedBucketName, !Ref ProcessedFileArchiveBucketName]]  
+    - !Not [!Equals [!Ref OutputBucketName, !Ref ProcessedFileArchiveBucketName]]    
+
+Resources:
+  # Bucket Resources
+  InputBucket:
+    Condition: BucketCreation
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${InputBucketName}
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: false
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+
+  FileProcessedBucket:
+    Condition: FileProcessedBucketCreation
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${FileProcessedBucketName}
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: false
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+
+  OutputBucket:
+    Condition: OutputBucketCreation  
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${OutputBucketName}
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: false
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+
+
+  ProcessedFileArchiveBucket:
+    Condition: ProcessedFileArchiveBucketCreation
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${ProcessedFileArchiveBucketName}
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: false
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+
+  # Wait Resources for conditional deployment
+  FileProcessedBucketWaitHandle: 
+      Condition: FileProcessedBucketCreation
+      DependsOn: FileProcessedBucket
+      Type: AWS::CloudFormation::WaitConditionHandle
+  
+  WaitHandle: 
+      Type: AWS::CloudFormation::WaitConditionHandle
+  
+  FileProcessedBucketWaitCondition: 
+      Type: AWS::CloudFormation::WaitCondition
+      Properties: 
+          Handle: !If [FileProcessedBucketCreation, !Ref FileProcessedBucketWaitHandle, !Ref WaitHandle]
+          Timeout: 1
+          Count: 0
+
+  DataBrewDummyFileLambdaWaitHandle: 
+      Condition: FileProcessedBucketCreation
+      DependsOn: DataBrewDummyFileLambda
+      Type: AWS::CloudFormation::WaitConditionHandle
+
+  
+  DataBrewDummyFileLambdaWaitCondition: 
+      Type: AWS::CloudFormation::WaitCondition
+      Properties: 
+          Handle: !If [FileProcessedBucketCreation, !Ref DataBrewDummyFileLambdaWaitHandle, !Ref WaitHandle]
+          Timeout: 1
+          Count: 0      
+
+  # Roles and Policies
+  DataProcessingRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      Description: Role used for processing data files
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole   
+      RoleName: !Sub ${ProjectName}-DataBrew-File-Preprocessing-Role
+      Tags: 
+        - Key: Project
+          Value: Preproc
+
+  DataProcessingBucketPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      Roles: 
+        - !Sub ${ProjectName}-DataBrew-File-Preprocessing-Role
+      PolicyName: !Sub ${ProjectName}-DataBrew-File-Preprocessing-Role-Bucket-Policy
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: Allow
+            Action: 
+              - s3:*Object
+              - s3:PutObjectAcl
+            Resource: 
+              - !Sub 'arn:aws:s3:::${InputBucketName}/${InputBucketPath}'
+              - !Sub 'arn:aws:s3:::${InputBucketName}/${InputBucketPath}*'
+              - !Sub 'arn:aws:s3:::${FileProcessedBucketName}/${FileProcessedBucketPath}'
+              - !Sub 'arn:aws:s3:::${FileProcessedBucketName}/${FileProcessedBucketPath}*'
+          - Effect: Allow
+            Action: 
+              - s3:ListBucket
+            Resource:
+              - !Sub 'arn:aws:s3:::${InputBucketName}'           
+              - !Sub 'arn:aws:s3:::${FileProcessedBucketName}'                                               
+    DependsOn:
+     - DataProcessingRole
+
+  DataProcessingArchivePolicy:
+    Condition: ArchiveProcessedFilesCondition
+    Type: AWS::IAM::Policy
+    Properties: 
+      Roles: 
+        - !Sub ${ProjectName}-DataBrew-File-Preprocessing-Role
+      PolicyName: !Sub ${ProjectName}-DataBrew-File-Archiving-Role-Bucket-Policy
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: Allow
+            Action: 
+              - s3:*Object
+              - s3:PutObjectAcl
+            Resource: 
+              - !Sub 'arn:aws:s3:::${ProcessedFileArchiveBucketName}/${ProcessedFileArchiveBucketPath}'
+              - !Sub 'arn:aws:s3:::${ProcessedFileArchiveBucketName}/${ProcessedFileArchiveBucketPath}*'
+          - Effect: Allow
+            Action: 
+              - s3:ListBucket
+            Resource: 
+              - !Sub 'arn:aws:s3:::${ProcessedFileArchiveBucketName}'                                              
+    DependsOn:
+     - DataProcessingRole
+  
+  DataProcessingDataBrewRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      Description: Role used for processing data files in DataBrew
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - databrew.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/service-role/AWSGlueDataBrewServiceRole        
+      RoleName: !Sub ${ProjectName}-File-Preprocessing-DataBrew-Role
+      Tags: 
+        - Key: Project
+          Value: Preproc
+
+  DataProcessingDataBrewBucketPolicy:
+    Type: AWS::IAM::Policy
+    Properties: 
+      Roles: 
+        - !Sub ${ProjectName}-File-Preprocessing-DataBrew-Role
+      PolicyName: !Sub ${ProjectName}-File-Preprocessing-DataBrew-Role-Bucket-Policy
+      PolicyDocument: 
+        Version: '2012-10-17'
+        Statement: 
+          - Effect: Allow
+            Action: 
+              - s3:*Object
+              - s3:*ObjectAcl
+              - s3:DeleteObject
+            Resource: 
+              - !Sub 'arn:aws:s3:::${FileProcessedBucketName}/${FileProcessedBucketPath}'
+              - !Sub 'arn:aws:s3:::${FileProcessedBucketName}/${FileProcessedBucketPath}*'
+              - !Sub 'arn:aws:s3:::${OutputBucketName}/${OutputBucketPath}'
+              - !Sub 'arn:aws:s3:::${OutputBucketName}/${OutputBucketPath}*'
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: 
+              - !Sub 'arn:aws:s3:::${FileProcessedBucketName}'   
+              - !Sub 'arn:aws:s3:::${OutputBucketName}'                                       
+    DependsOn:
+     - DataProcessingDataBrewRole
+
+  # Preprocessor Lambda and permissions
+  DataBrewFilePreprocessorLambda: 
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: |
+        Performs initial data file preprocessing that is not available in databrew
+        Items include:
+         o Remove escape sequences from file
+         o Remove embedded double quotes in CSV field values
+         o Fix up CSV column header
+      FunctionName: !Sub "${ProjectName}-DataBrew-File-Preprocessor"
+      Handler: index.lambda_handler
+
+      
+      Code: 
+        ZipFile: |
+          import json
+          import csv
+          import os
+          import urllib.parse
+          import boto3
+
+          def get_bool_ev(ev_name):
+              return os.environ.get('COLUMN_HEADER_CONVERT_HASHTAGS', 'true').lower() == 'true'
+              
+          COLUMN_HEADER_CONVERT_HASHTAGS  = get_bool_ev('COLUMN_HEADER_CONVERT_HASHTAGS')
+          COLUMN_HEADER_CONVERT_SPACES = get_bool_ev('COLUMN_HEADER_CONVERT_SPACES')
+          COLUMN_HEADER_TRIM = get_bool_ev('COLUMN_HEADER_TRIM')
+          INPUT_BUCKET_NAME = os.environ.get('INPUT_BUCKET_NAME', '')
+          INPUT_BUCKET_PREFIX = os.environ.get('INPUT_BUCKET_PREFIX', 'BLOCKED')
+          FILE_PROCESSED_BUCKET_NAME = os.environ.get('FILE_PROCESSED_BUCKET_NAME', '')          
+          FILE_PROCESSED_BUCKET_PATH = os.environ.get('FILE_PROCESSED_BUCKET_PATH', 'databrew_file_preprocessing/file_preprocessing_output/')
+          DELIMITER = os.environ.get('DELIMITER', ',')
+          REMOVE_ESCAPE_CHARS = get_bool_ev('REMOVE_ESCAPE_CHARS')
+          REMOVE_EMBEDDED_DOUBLE_QUOTES = get_bool_ev('REMOVE_EMBEDDED_DOUBLE_QUOTES')
+          REGION = os.environ.get('REGION', '')
+
+          s3 = boto3.client('s3', region_name=REGION)
+
+          def lambda_handler(event, context):
+
+              bucket = event['Records'][0]['s3']['bucket']['name']
+              key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
+              if not key.startswith(INPUT_BUCKET_PREFIX):
+                print("Object " + key + ' does not start with ' + INPUT_BUCKET_PREFIX)
+                return
+              try:
+                  response = s3.get_object(Bucket=bucket, Key=key)
+                  object_body = response['Body'].read().decode('utf-8') 
+                  
+                  if REMOVE_ESCAPE_CHARS:
+                      object_body = object_body.replace('\\', '')
+                  print("TYPE: " + response['ContentType'])
+                  match response['ContentType']:
+                      case 'text/csv':
+                          print('Processing CSV')
+                          sniffer = csv.Sniffer()
+                          has_header = sniffer.has_header(object_body)
+                          if has_header:
+                              print('Has header')
+                              
+                          first_row = object_body.split('\r')[0]
+                          header_list = first_row.split(DELIMITER)
+                          
+                          new_header_list = []
+                          for header in header_list:
+                              new_colmn = header
+                              if COLUMN_HEADER_TRIM:
+                                  new_column = header.strip()
+                                  
+                              if COLUMN_HEADER_CONVERT_SPACES:
+                                  new_column = new_column.replace(' ', '_')
+                                  
+                              if COLUMN_HEADER_CONVERT_HASHTAGS:
+                                  new_column = new_column.replace('#', 'NUMBER')
+                                  
+                              new_header_list.append(new_column)
+                                  
+                          new_rows = []
+                          for row in object_body.split('\r')[1:]:
+                              new_row_list = []
+                              for column in row.split(DELIMITER):
+                                  if len(column[1:-1].split('"')) > 1:
+                                      new_row_list += [ column[0] + column[1:-1].replace('"', '') + column[-1]]
+                                  else:
+                                      new_row_list += [column]
+                              new_rows += [ ','.join(new_row_list)]
+                                  
+                          first_row = DELIMITER.join(new_header_list)
+                          
+                          new_rows = '\r'.join([first_row] + new_rows)
+
+                          file_name = key.split('/')[-1]
+                          file_processed_key = (FILE_PROCESSED_BUCKET_PATH if FILE_PROCESSED_BUCKET_PATH.endswith('/') else FILE_PROCESSED_BUCKET_PATH + '/') + file_name
+                          body = bytes(new_rows, 'utf-8')
+                          try:
+                            response = s3.put_object(Bucket=FILE_PROCESSED_BUCKET_NAME, Key=file_processed_key, Body=body)
+                          except Exception as e:
+                            print('Error writing output to bucket {0}, path {1}'.format(FILE_PROCESSED_BUCKET_NAME, file_processed_key))
+                            print(e)
+                          return
+                      case default:
+                          return
+                      
+                  return
+              except Exception as e:
+                  print(e)
+                  raise e
+
+      Role: !GetAtt DataProcessingRole.Arn
+      Timeout: 300
+      Runtime: python3.11  
+      Environment:
+        Variables:
+          COLUMN_HEADER_CONVERT_HASHTAGS: !Sub ${ ColumnHeaderConvertHashtags}
+          COLUMN_HEADER_CONVERT_SPACES: !Sub ${ColumnHeaderSpaces}
+          COLUMN_HEADER_TRIM: !Sub ${ColumnHeaderTrim}
+          DELIMITER: !Sub ${CSVDelimiter}
+          INPUT_BUCKET_PREFIX: !Sub ${InputBucketPath}
+          INPUT_BUCKET_NAME: !Sub ${InputBucketName}
+          FILE_PROCESSED_BUCKET_NAME: !Sub ${FileProcessedBucketName}          
+          FILE_PROCESSED_BUCKET_PATH: !Sub ${FileProcessedBucketPath}           
+          REMOVE_EMBEDDED_DOUBLE_QUOTES: !Sub ${RemoveEmbeddedDoubleQuotes}
+          REMOVE_ESCAPE_CHARS: !Sub ${RemoveEscapeChars}
+          REGION: !Sub ${AWS::Region}
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+
+  InputBucketPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt DataBrewFilePreprocessorLambda.Arn
+      Principal: s3.amazonaws.com
+      SourceAccount: !Sub "${AWS::AccountId}"
+      SourceArn: !Sub "arn:aws:s3:::${InputBucketName}"
+    DependsOn:
+      - DataBrewFilePreprocessorLambda
+
+  # Conditional Archive Lambda and Permissions
+  DataBrewFileArchiveLambda: 
+    Type: AWS::Lambda::Function
+    Condition: ArchiveProcessedFilesCondition
+    Properties:
+      Description: |
+        Performs move of objects processed by DataBrew into an archive location so the objects are not
+        processed repeatedly
+      FunctionName: !Sub "${ProjectName}-DataBrew-File-Archiver"
+      Handler: index.lambda_handler
+
+      
+      Code: 
+        ZipFile: |
+          import os
+          import urllib.parse
+          import boto3
+          import cfnresponse
+
+          FILE_PROCESSED_BUCKET_NAME = os.environ.get('FILE_PROCESSED_BUCKET_NAME', '')
+          FILE_PROCESSED_BUCKET_PATH = os.environ.get('FILE_PROCESSED_BUCKET_PATH', 'databrew_file_preprocessing/file_preprocessing_output/')
+          PROCESSED_FILE_ARCHIVE_BUCKET_NAME = os.environ.get('PROCESSED_FILE_ARCHIVE_BUCKET_NAME', '')
+          PROCESSED_FILE_ARCHIVE_BUCKET_PATH = os.environ.get('PROCESSED_FILE_ARCHIVE_BUCKET_PATH', 'databrew_file_preprocessing/processed_file_archive/')
+          REGION = os.environ.get('REGION', '')
+
+          s3 = boto3.client('s3', region_name=REGION)
+
+          def lambda_handler(event, context):
+
+            objects_to_process = True
+            while objects_to_process:
+              list_response = s3.list_objects(
+                Bucket=FILE_PROCESSED_BUCKET_NAME,
+                MaxKeys=100,
+                Prefix=FILE_PROCESSED_BUCKET_PATH)
+            
+              src_objects = list_response.get('Contents', [])
+              print(src_objects)
+              if len(src_objects) == 0:
+                objects_to_process = False
+                
+              for entry in src_objects:
+                src_key = entry['Key']
+                base_object_name = entry['Key'].split('/')[-1]
+                file_archived_key = (PROCESSED_FILE_ARCHIVE_BUCKET_PATH if PROCESSED_FILE_ARCHIVE_BUCKET_PATH.endswith('/') else PROCESSED_FILE_ARCHIVE_BUCKET_PATH + '/') + base_object_name
+
+                src_reference = '/'+ FILE_PROCESSED_BUCKET_NAME + '/' + src_key
+                print('Copying ' + src_reference + ' to ' +  '/'+ PROCESSED_FILE_ARCHIVE_BUCKET_NAME + '/' + file_archived_key)
+                try:
+                  copy_response = s3.copy_object(Bucket=PROCESSED_FILE_ARCHIVE_BUCKET_NAME, Key=file_archived_key, CopySource=src_reference)
+                  if 'ETag' in copy_response.get('CopyObjectResult', {}).keys():
+                    s3.delete_object(Bucket=FILE_PROCESSED_BUCKET_NAME, Key=src_key)
+                except Exception as e:
+                  print(e)
+                  break   
+
+      Role: !GetAtt DataProcessingRole.Arn
+      Timeout: 300
+      Runtime: python3.11  
+      Environment:
+        Variables:
+          FILE_PROCESSED_BUCKET_NAME: !Sub ${FileProcessedBucketName}          
+          FILE_PROCESSED_BUCKET_PATH: !Sub ${FileProcessedBucketPath}           
+          PROCESSED_FILE_ARCHIVE_BUCKET_PATH: !Sub ${ProcessedFileArchiveBucketPath}
+          PROCESSED_FILE_ARCHIVE_BUCKET_NAME: !Sub ${ProcessedFileArchiveBucketName}
+          REGION: !Sub ${AWS::Region}
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+
+  FileArchivePermission:
+    Type: AWS::Lambda::Permission
+    Condition: ArchiveProcessedFilesCondition
+    Properties:
+      Action: 'lambda:InvokeFunction'
+      FunctionName: !GetAtt DataBrewFileArchiveLambda.Arn
+      Principal: events.amazonaws.com
+      SourceAccount: !Sub "${AWS::AccountId}"
+      SourceArn: !GetAtt FileArchiveEventRule.Arn
+    DependsOn:
+      - DataBrewFileArchiveLambda
+
+  # Rule to trigger the Archiver Lambda when the DataBrew job has completed
+  FileArchiveEventRule: 
+    Type: AWS::Events::Rule
+    Condition: ArchiveProcessedFilesCondition
+    Properties: 
+      Description: "EventRule"
+      EventPattern: 
+        source: 
+          - "aws.databrew"
+        detail-type: 
+          - "DataBrew Job State Change"
+        detail: 
+          state: 
+            - "SUCCEEDED"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: !GetAtt DataBrewFileArchiveLambda.Arn
+          Id: "TargetFunctionV1"
+    DependsOn:
+      - DataBrewFileArchiveLambda
+
+  # Custom Resource to create file in file processed bucket/path to allow DataBrew Resources
+  # to be deployed
+
+  #========================================
+  # Init Function to create DataBrew Dummy input file for DataBrew
+  #========================================    
+  DataBrewDummyFileLambda: 
+    Type: AWS::Lambda::Function
+    DependsOn: 
+      - FileProcessedBucketWaitCondition    
+    Properties:
+      Description: |
+        Creates a dummy object needed for DataBrew Resource Deployment
+      FunctionName: !Sub "${ProjectName}-DataBrew-Dummy-File-Creator"
+      Handler: index.lambda_handler
+
+      Code: 
+        ZipFile: |
+          import os
+          import urllib.parse
+          import boto3
+          import cfnresponse
+
+          FILE_PROCESSED_BUCKET_NAME = os.environ.get('FILE_PROCESSED_BUCKET_NAME', '')
+          FILE_PROCESSED_BUCKET_PATH = os.environ.get('FILE_PROCESSED_BUCKET_PATH', 'databrew_file_preprocessing/file_preprocessing_output/')
+          REGION = os.environ.get('REGION', '')
+
+          s3 = boto3.client('s3', region_name=REGION)
+
+          def lambda_handler(event, context):
+
+              list_response = s3.list_objects(
+                Bucket=FILE_PROCESSED_BUCKET_NAME,
+                MaxKeys=2,
+                Prefix=FILE_PROCESSED_BUCKET_PATH)
+            
+              print(list_response.get('Contents', []))
+              if len(list_response.get('Contents', [])) > 0:
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {})               
+
+              new_rows = """
+              Name,Address1,Address2,City,State,Zipcode,Account_Number,Email,Sales_Amt
+              "Tommy Johnson","986 Main St",,"Oxnard","CA","93030","7001100","tjoxnard@lookout.com",42"""
+
+              file_processed_key = (FILE_PROCESSED_BUCKET_PATH if FILE_PROCESSED_BUCKET_PATH.endswith('/') else FILE_PROCESSED_BUCKET_PATH + '/') + 'dummy_data_brew_file.csv'
+              body = bytes(new_rows, 'utf-8')
+              try:
+                response = s3.put_object(Bucket=FILE_PROCESSED_BUCKET_NAME, Key=file_processed_key, Body=body)
+
+              except Exception as e:
+                print('Error writing output to bucket {0}, path {1}'.format(FILE_PROCESSED_BUCKET_NAME, file_processed_key))
+                print(e)
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {})                  
+
+      Role: !GetAtt DataProcessingRole.Arn
+      Timeout: 300
+      Runtime: python3.11  
+      Environment:
+        Variables:
+          FILE_PROCESSED_BUCKET_NAME: !Sub ${FileProcessedBucketName}          
+          FILE_PROCESSED_BUCKET_PATH: !Sub ${FileProcessedBucketPath}           
+          REGION: !Sub ${AWS::Region}
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+
+  #========================================
+  # Invoke Lamdba to dummy file in file processed path
+  #========================================      
+  InitializeDummyDataBrewFile:
+    Type: Custom::DataBrewDummyFileLambda
+    DependsOn: 
+      - DataBrewDummyFileLambdaWaitCondition
+    Properties:
+      ServiceTimeout: 30
+      ServiceToken:
+         !GetAtt DataBrewDummyFileLambda.Arn
+
+  # DataBrew Resources
+  DataBrewFilePreprocessingDataset:
+    Type: AWS::DataBrew::Dataset
+    Properties: 
+      Name: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Dataset"    
+      Format: !Sub "${DataBrewFileType}"
+      FormatOptions: 
+        Csv:
+          Delimiter: !Sub "${CSVDelimiter}"
+          HeaderRow: !Sub "${CSVHeader}"
+      Input: 
+        S3InputDefinition:
+          Bucket: !Sub "${FileProcessedBucketName}"
+          Key: !Join
+            - ''
+            - - !Sub "${FileProcessedBucketPath}<.*>"
+              - "."
+              - !FindInMap [FileExtentionMap, !Ref DataBrewFileType, FileExt]
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+
+  DataBrewFilePreprocessingRecipe:
+    Type: AWS::DataBrew::Recipe
+    Properties: 
+      Description: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Recipe"
+      Name: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Recipe"
+      Steps:
+        - Action:
+            Operation: REMOVE_COMBINED
+            Parameters:
+              customCharacters: '"'
+              removeCustomCharacters: 'true'
+              sourceColumn: Address1   
+        - Action:
+            Operation: REMOVE_COMBINED
+            Parameters:
+              customCharacters: '"'
+              removeCustomCharacters: 'true'
+              sourceColumn: Account_Number                     
+        - Action:
+            Operation: REMOVE_COMBINED
+            Parameters:
+              customCharacters: '"'
+              removeCustomCharacters: 'true'
+              sourceColumn: Address2
+        - Action:
+            Operation: REMOVE_COMBINED
+            Parameters:
+              customCharacters: '"'
+              removeCustomCharacters: 'true'
+              sourceColumn: Email      
+        - Action:
+            Operation: REMOVE_COMBINED
+            Parameters:
+              customCharacters: '$,'
+              removeCustomCharacters: 'true'
+              sourceColumn: Sales_Amt    
+        - Action:
+            Operation: CHANGE_DATA_TYPE
+            Parameters:
+              columnDataType: string
+              sourceColumn: Zipcode   
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+  
+  DataBrewFilePreprocessingDataQuality:
+    Type: AWS::DataBrew::Ruleset
+    Properties: 
+      Description: !Sub "${ProjectName}-DataBrew-File-Preprocessing-DataQualityRuleset Valid 5 or 9 digit zip code"
+      Name: !Sub "${ProjectName}-DataBrew-File-Preprocessing-DataQualityRuleset"
+      Rules: 
+        - CheckExpression: "(:col Matches :val1 or :col Matches :val2)"
+          SubstitutionMap:
+            - ValueReference: ":col"
+              Value: "`Zipcode`"
+            - ValueReference: ":val1"
+              Value: "[0-9]5"
+            - ValueReference: ":val2"
+              Value: "[0-9]5/-[0-9]4"                            
+          Name: "Valid 5 or 9 digit zip code"
+          Threshold: 
+            Type: GREATER_THAN_OR_EQUAL
+            Unit: PERCENTAGE
+            Value: 95.0
+      TargetArn: !Sub "arn:aws:databrew:${AWS::Region}:${AWS::AccountId}:dataset/${ProjectName}-DataBrew-File-Preprocessing-Dataset"
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+    DependsOn:
+      - DataBrewFilePreprocessingRecipe          
+
+  DataBrewFilePreprocessingProject:
+    Type: AWS::DataBrew::Project
+    Properties: 
+      Name: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Project"
+      RecipeName: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Recipe"
+      DatasetName: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Dataset"
+      RoleArn: !GetAtt  DataProcessingDataBrewRole.Arn
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+    DependsOn:
+      - InitializeDummyDataBrewFile    
+      - FileProcessedBucketWaitCondition    
+      - DataProcessingDataBrewRole
+      - DataBrewFilePreprocessingRecipe
+      - DataBrewFilePreprocessingDataset
+
+  DataBrewFilePreprocessingRecipeJob:
+    Type: AWS::DataBrew::Job
+    Properties: 
+      Name: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Recipe-Job"
+      Outputs: 
+        - Format: !Sub "${DataBrewFileType}"
+          FormatOptions: 
+            Csv:
+              Delimiter: !Sub "${CSVDelimiter}"
+          Location: 
+            Bucket: !Sub "${OutputBucketName}"
+            Key: !Sub "${OutputBucketPath}"
+      ProjectName: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Project"
+      RoleArn: !GetAtt  DataProcessingDataBrewRole.Arn
+      Type: RECIPE
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName}
+    DependsOn:
+      - DataProcessingDataBrewRole    
+      - DataBrewFilePreprocessingRecipe
+      - DataBrewFilePreprocessingProject
+
+
+  DataBrewFilePreprocessingJobSchedule:
+    Type: AWS::DataBrew::Schedule
+    Properties: 
+      Name: !Sub "${ProjectName}-DataBrew-File-Preprocessing-Job-Schedule"
+      # Setting the run time in the past for initial load
+      # Change to proper run time when ready
+      CronExpression: "cron(15 12 31 12 ? 2022)"
+      JobNames: 
+        - !Sub "${ProjectName}-DataBrew-File-Preprocessing-Recipe-Job"
+      Tags: 
+        - Key: Project
+          Value: !Sub ${ProjectName} 
+    DependsOn:
+      - DataBrewFilePreprocessingRecipeJob
